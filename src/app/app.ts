@@ -1,11 +1,10 @@
-import { Component, signal } from '@angular/core';
+import { Component } from '@angular/core';
+import { GameBoardComponent } from './features/game-board/game-board.component';
 
 @Component({
   selector: 'app-root',
-  imports: [],
-  templateUrl: './app.html',
+  imports: [GameBoardComponent],
+  template: '<app-game-board></app-game-board>',
   styleUrl: './app.scss'
 })
-export class App {
-  protected readonly title = signal('tonnetz-puzzle');
-}
+export class App {}
