@@ -2,8 +2,11 @@ import { Component, OnInit, OnDestroy, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AudioService } from '../../core/services/audio.service';
 import { GraphEngineService } from '../../core/services/graph-engine.service';
+import { LevelGenerationService } from '../../core/services/level-generation.service';
+import { GameStateService, MoveResult } from '../../core/services/game-state.service';
 import { NoteNode, NoteEdge, EdgeType } from '../../core/models/note.model';
 import { TONNETZ_PRESETS } from '../../core/models/tonnetz-coordinate.model';
+import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.model';
 
 @Component({
   selector: 'app-game-board',
@@ -41,8 +44,9 @@ import { TONNETZ_PRESETS } from '../../core/models/tonnetz-coordinate.model';
               <span class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Nota Raiz</span>
               <select
                 [value]="currentRootPitchClass()"
+                [disabled]="isChallengeActive()"
                 (change)="onRootChange($event)"
-                class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-violet-500 hover:border-slate-700 transition-colors cursor-pointer">
+                class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-violet-500 hover:border-slate-700 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
                 <option *ngFor="let note of availableRoots" [value]="note.pitchClass">
                   {{ note.name }} · {{ note.labelPt }}
                 </option>
@@ -53,8 +57,9 @@ import { TONNETZ_PRESETS } from '../../core/models/tonnetz-coordinate.model';
               <span class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Configuração</span>
               <select
                 [value]="currentPreset()"
+                [disabled]="isChallengeActive()"
                 (change)="onPresetChange($event)"
-                class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-violet-500 hover:border-slate-700 transition-colors cursor-pointer">
+                class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-violet-500 hover:border-slate-700 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
                 <option value="classic">Clássico (3,4,5)</option>
                 <option value="wholetone">Tons Inteiros (2,4,6)</option>
                 <option value="chromatic">Cromático (1,4,7)</option>
@@ -97,6 +102,47 @@ import { TONNETZ_PRESETS } from '../../core/models/tonnetz-coordinate.model';
 
           <!-- Malha Harmônica (canvas SVG) -->
           <div class="relative flex-1 min-w-0 h-[500px] md:h-[650px] rounded-2xl overflow-hidden bg-black/80 border border-slate-800/70 backdrop-blur-md shadow-2xl shadow-black/60">
+
+            <!-- Banner de desafio ativo -->
+            <div *ngIf="gameLevel()" class="absolute top-3 left-3 z-10 px-3 py-2 rounded-xl bg-slate-950/90 border border-violet-500/30 backdrop-blur-sm">
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] uppercase tracking-widest font-bold text-violet-300">Desafio</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
+                  [ngClass]="{
+                    'bg-emerald-500/20 text-emerald-300': selectedDifficulty() === 'easy',
+                    'bg-amber-500/20 text-amber-300': selectedDifficulty() === 'medium',
+                    'bg-rose-500/20 text-rose-300': selectedDifficulty() === 'hard'
+                  }">
+                  {{ difficultyLabel(selectedDifficulty()) }}
+                </span>
+              </div>
+              <div class="text-sm font-bold mt-1">
+                Alvo: <span class="text-amber-300">{{ getNodeById(gameLevel()!.goal.targetNodeId)?.name ?? '—' }}</span>
+              </div>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs text-slate-300 font-mono">Movimentos {{ gameMoves() }}/{{ gameLevel()!.goal.maxMoves }}</span>
+                <span *ngIf="!gameComplete()" class="text-xs text-slate-400">· estrelas {{ renderStars(gameStars()) }}</span>
+              </div>
+            </div>
+
+            <!-- Banner de resultado (vitória / derrota) -->
+            <div *ngIf="isChallengeActive() === false && gameLevel()" class="absolute inset-x-0 top-6 z-20 flex justify-center pointer-events-none">
+              <div class="px-6 py-3 rounded-2xl border shadow-xl backdrop-blur-md flex items-center gap-4"
+                [ngClass]="gameOutcome() === 'win'
+                  ? 'bg-emerald-950/90 border-emerald-500/40'
+                  : 'bg-rose-950/90 border-rose-500/40'">
+                <div>
+                  <div class="text-lg font-bold"
+                    [ngClass]="gameOutcome() === 'win' ? 'text-emerald-300' : 'text-rose-300'">
+                    {{ gameOutcome() === 'win' ? 'Desafio Concluído!' : 'Limite de Movimentos' }}
+                  </div>
+                  <div class="text-sm text-slate-300 mt-0.5">
+                    <ng-container *ngIf="gameOutcome() === 'win'">Estrelas: {{ renderStars(gameStars()) }} em {{ gameMoves() }} movimentos</ng-container>
+                    <ng-container *ngIf="gameOutcome() === 'lose'">Tente novamente com outro caminho.</ng-container>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <!-- SVG Responsivo -->
             <svg
@@ -143,6 +189,22 @@ import { TONNETZ_PRESETS } from '../../core/models/tonnetz-coordinate.model';
                     [ngClass]="getNodeCircleClass(node)"
                     class="transition-all duration-200" />
 
+                  <!-- Anel do nó-alvo do desafio -->
+                  <circle
+                    *ngIf="isTargetNode(node)"
+                    r="31"
+                    fill="none"
+                    class="stroke-amber-300 stroke-[2px] pointer-events-none"
+                    style="filter: drop-shadow(0 0 8px rgba(252,211,77,0.8));" />
+
+                  <!-- Anel do passo sugerido (dica) -->
+                  <circle
+                    *ngIf="hintNodeId() === node.id"
+                    r="31"
+                    fill="none"
+                    class="stroke-cyan-300 stroke-[3px] animate-pulse pointer-events-none"
+                    style="filter: drop-shadow(0 0 8px rgba(103,232,249,0.9));" />
+
                   <circle
                     *ngIf="isInPath(node.id)"
                     r="29"
@@ -164,82 +226,152 @@ import { TONNETZ_PRESETS } from '../../core/models/tonnetz-coordinate.model';
             <!-- Indicador de modo de navegação -->
             <div class="absolute bottom-4 left-4 z-10 px-3 py-1.5 rounded-full bg-black/70 border border-slate-800/70 backdrop-blur-sm">
               <span class="text-[11px] font-medium text-slate-300 tracking-wide">
-                Clique em um vizinho para estender o trajeto
+                {{ isChallengeActive() ? 'Clique no próximo vizinho para avançar no desafio' : 'Clique em um vizinho para estender o trajeto' }}
               </span>
             </div>
           </div>
 
-          <!-- Painel de Resumo (lateral, compacto) -->
-            <aside class="w-52 shrink-0 hidden md:flex flex-col rounded-2xl bg-black/80 border border-slate-800/70 backdrop-blur-md shadow-2xl shadow-black/60 p-3">
-              <div *ngIf="selectedNode(); else semSelecao" class="flex flex-col h-full min-h-0">
+          <!-- Painel Lateral -->
+            <aside class="w-56 shrink-0 hidden md:flex flex-col gap-3 min-w-0">
 
-                <!-- Cabeçalho -->
-                <div class="flex items-center justify-between mb-2">
-                  <h3 class="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Resumo</h3>
+              <!-- Painel de Desafio -->
+              <div class="rounded-2xl bg-black/80 border border-violet-500/20 backdrop-blur-md shadow-2xl shadow-black/60 p-3">
+
+                <div class="flex items-center justify-between mb-3">
+                  <h3 class="text-[10px] font-bold text-violet-300 uppercase tracking-wider">Modo Desafio</h3>
                   <span
                     class="text-[9px] px-1.5 py-0.5 rounded-full"
-                    [ngClass]="isSelectedRoot() ? 'bg-pink-500/20 text-pink-300' : 'bg-violet-500/20 text-violet-300'">
-                    {{ isSelectedRoot() ? 'RAIZ' : 'NOTA' }}
+                    [ngClass]="isChallengeActive() ? 'bg-violet-500/20 text-violet-300' : 'bg-slate-700/40 text-slate-400'">
+                    {{ isChallengeActive() ? 'ATIVO' : 'INATIVO' }}
                   </span>
                 </div>
 
-                <!-- Nota em destaque -->
-                <div class="text-center py-2.5 mb-2 rounded-xl bg-slate-900/60 border border-slate-800/50">
-                  <div
-                    class="text-2xl font-bold leading-none"
-                    [ngClass]="isSelectedRoot() ? 'text-pink-300' : 'text-violet-200'">
-                    {{ selectedNode()?.name }}
-                  </div>
-                  <div class="text-[10px] text-slate-400 mt-1">{{ selectedNode()?.labelPt }}</div>
-                </div>
-
-                <!-- Detalhes compactos -->
-                <div class="space-y-1.5 text-xs">
-                  <div class="flex justify-between">
-                    <span class="text-slate-400">PC</span>
-                    <span class="font-mono font-semibold text-white">{{ selectedNode()?.pitchClass }}</span>
-                  </div>
-                  <div class="flex justify-between">
-                    <span class="text-slate-400">Posição</span>
-                    <span class="font-mono font-semibold text-violet-200">r{{ selectedNode()?.row }}·c{{ selectedNode()?.col }}</span>
-                  </div>
-                  <div class="flex justify-between">
-                    <span class="text-slate-400">Vizinhos</span>
-                    <span class="font-mono font-semibold text-white">{{ currentNeighbors().length }}</span>
-                  </div>
-                  <div class="flex justify-between">
-                    <span class="text-slate-400">Passos</span>
-                    <span class="font-mono font-semibold text-white">{{ pathLength() }}</span>
+                <!-- Dificuldade -->
+                <div class="mb-3">
+                  <span class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Dificuldade</span>
+                  <div class="flex gap-1.5 mt-1">
+                    <button
+                      *ngFor="let d of difficulties"
+                      (click)="selectDifficulty(d)"
+                      [disabled]="isChallengeActive()"
+                      class="flex-1 px-1 py-1 rounded-lg text-[11px] font-semibold transition-colors duration-200 border disabled:opacity-50"
+                      [ngClass]="selectedDifficulty() === d
+                        ? 'bg-violet-600/30 border-violet-400/50 text-violet-100'
+                        : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-600'">
+                      {{ difficultyLabel(d) }}
+                    </button>
                   </div>
                 </div>
 
-                <!-- Ações (rodapé) -->
-                <div class="mt-auto pt-3 space-y-1.5">
+                <!-- Botão principal de desafio -->
+                <button
+                  *ngIf="!isChallengeActive()"
+                  (click)="startChallenge()"
+                  class="w-full px-2 py-2 rounded-lg text-[11px] font-bold transition-colors duration-200
+                    border border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/20">
+                  ▶ Iniciar Desafio
+                </button>
+
+                <!-- Controles do desafio ativo -->
+                <ng-container *ngIf="isChallengeActive()">
                   <button
-                    *ngIf="pathLength() > 0"
-                    (click)="clearPath()"
-                    class="w-full px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors duration-200
-                      border border-rose-500/20 bg-rose-500/5 text-rose-300 hover:bg-rose-500/10">
-                    ✕ Limpar Caminho
+                    (click)="requestHint()"
+                    class="w-full px-2 py-2 rounded-lg text-[11px] font-bold transition-colors duration-200
+                      border border-cyan-500/30 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20">
+                    💡 Dica
                   </button>
                   <button
-                    (click)="pinSelectedAsRoot()"
-                    class="w-full px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors duration-200
-                      border border-pink-500/20 bg-pink-500/5 text-pink-300 hover:bg-pink-500/10">
-                      Fixar como Raiz
+                    (click)="exitChallenge()"
+                    class="w-full mt-1.5 px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors duration-200
+                      border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800">
+                    ✕ Sair do Desafio
                   </button>
-                </div>
+                </ng-container>
+
+                <!-- Após o fim do desafio -->
+                <ng-container *ngIf="!isChallengeActive() && gameLevel()">
+                  <button
+                    (click)="nextChallenge()"
+                    class="w-full px-2 py-2 rounded-lg text-[11px] font-bold transition-colors duration-200
+                      border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20">
+                    ▶ Próximo Desafio
+                  </button>
+                </ng-container>
               </div>
 
-              <!-- Estado vazio -->
-              <ng-template #semSelecao>
-                <div class="flex flex-col flex-1 items-center justify-center text-center gap-2">
-                  <span class="text-xl text-slate-400">♪</span>
-                  <p class="text-[10px] text-slate-400 leading-relaxed px-2">
-                    Selecione um nó na malha para ver o resumo
-                  </p>
+              <!-- Painel de Resumo (nó selecionado) -->
+              <div class="rounded-2xl bg-black/80 border border-slate-800/70 backdrop-blur-md shadow-2xl shadow-black/60 p-3">
+                <div *ngIf="selectedNode(); else semSelecao" class="flex flex-col h-full min-h-0">
+
+                  <!-- Cabeçalho -->
+                  <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Resumo</h3>
+                    <span
+                      class="text-[9px] px-1.5 py-0.5 rounded-full"
+                      [ngClass]="isSelectedRoot() ? 'bg-pink-500/20 text-pink-300' : 'bg-violet-500/20 text-violet-300'">
+                      {{ isSelectedRoot() ? 'RAIZ' : 'NOTA' }}
+                    </span>
+                  </div>
+
+                  <!-- Nota em destaque -->
+                  <div class="text-center py-2.5 mb-2 rounded-xl bg-slate-900/60 border border-slate-800/50">
+                    <div
+                      class="text-2xl font-bold leading-none"
+                      [ngClass]="isSelectedRoot() ? 'text-pink-300' : 'text-violet-200'">
+                      {{ selectedNode()?.name }}
+                    </div>
+                    <div class="text-[10px] text-slate-400 mt-1">{{ selectedNode()?.labelPt }}</div>
+                  </div>
+
+                  <!-- Detalhes compactos -->
+                  <div class="space-y-1.5 text-xs">
+                    <div class="flex justify-between">
+                      <span class="text-slate-400">PC</span>
+                      <span class="font-mono font-semibold text-white">{{ selectedNode()?.pitchClass }}</span>
+                    </div>
+                    <div class="flex justify-between">
+                      <span class="text-slate-400">Posição</span>
+                      <span class="font-mono font-semibold text-violet-200">r{{ selectedNode()?.row }}·c{{ selectedNode()?.col }}</span>
+                    </div>
+                    <div class="flex justify-between">
+                      <span class="text-slate-400">Vizinhos</span>
+                      <span class="font-mono font-semibold text-white">{{ currentNeighbors().length }}</span>
+                    </div>
+                    <div class="flex justify-between">
+                      <span class="text-slate-400">Passos</span>
+                      <span class="font-mono font-semibold text-white">{{ pathLength() }}</span>
+                    </div>
+                  </div>
+
+                  <!-- Ações (rodapé) -->
+                  <div class="mt-auto pt-3 space-y-1.5">
+                    <button
+                      *ngIf="pathLength() > 0 && !isChallengeActive()"
+                      (click)="clearPath()"
+                      class="w-full px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors duration-200
+                        border border-rose-500/20 bg-rose-500/5 text-rose-300 hover:bg-rose-500/10">
+                      ✕ Limpar Caminho
+                    </button>
+                    <button
+                      (click)="pinSelectedAsRoot()"
+                      [disabled]="isChallengeActive()"
+                      class="w-full px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors duration-200
+                        border border-pink-500/20 bg-pink-500/5 text-pink-300 hover:bg-pink-500/10 disabled:opacity-40 disabled:cursor-not-allowed">
+                        Fixar como Raiz
+                    </button>
+                  </div>
                 </div>
-              </ng-template>
+
+                <!-- Estado vazio -->
+                <ng-template #semSelecao>
+                  <div class="flex flex-col flex-1 items-center justify-center text-center gap-2">
+                    <span class="text-xl text-slate-400">♪</span>
+                    <p class="text-[10px] text-slate-400 leading-relaxed px-2">
+                      Selecione um nó na malha para ver o resumo
+                    </p>
+                  </div>
+                </ng-template>
+              </div>
             </aside>
           </div>
 
@@ -256,6 +388,12 @@ import { TONNETZ_PRESETS } from '../../core/models/tonnetz-coordinate.model';
             </span>
             <span class="flex items-center gap-2">
               <span class="w-3 h-0.5 bg-white/80 rounded"></span> Trajeto Ativo
+            </span>
+            <span class="flex items-center gap-2">
+              <span class="w-3 h-0.5 bg-amber-300/80 rounded"></span> Alvo do Desafio
+            </span>
+            <span class="flex items-center gap-2">
+              <span class="w-3 h-0.5 bg-cyan-300/80 rounded"></span> Dica
             </span>
             <span class="flex items-center gap-2">
               <span class="w-2.5 h-2.5 rounded-full bg-pink-600"></span> Raiz
@@ -286,6 +424,18 @@ export class GameBoardComponent implements OnInit, OnDestroy {
   currentRootPitchClass = signal<number>(0);
   currentPreset = signal<string>('classic');
 
+  // ---- Estado do Modo Desafio (espelhado do GameStateService) ----
+  difficulties: Difficulty[] = ['easy', 'medium', 'hard'];
+  selectedDifficulty = signal<Difficulty>('easy');
+
+  gameLevel = signal<Level | null>(null);
+  gameMoves = signal<number>(0);
+  gameComplete = signal<boolean>(false);
+  gameOutcome = signal<ChallengeOutcome | null>(null);
+  gameStars = signal<1 | 2 | 3>(1);
+  hintNodeId = signal<string | null>(null);
+  lastMoveResult = signal<MoveResult | null>(null);
+
   viewBox = '0 0 800 600';
 
   availableRoots = [
@@ -309,6 +459,11 @@ export class GameBoardComponent implements OnInit, OnDestroy {
     return id ? this.getNodeById(id) : undefined;
   });
 
+  /** Desafio ativo e em andamento (não concluído) */
+  isChallengeActive = computed<boolean>(() => {
+    return this.gameLevel() !== null && !this.gameComplete();
+  });
+
   /** Pontos SVG da polilinha do trajeto contínuo */
   pathPolylinePoints = computed<string | null>(() => {
     const path = this.currentPath();
@@ -324,7 +479,9 @@ export class GameBoardComponent implements OnInit, OnDestroy {
 
   constructor(
     private audioService: AudioService,
-    private graphEngine: GraphEngineService
+    private graphEngine: GraphEngineService,
+    private levelGenerationService: LevelGenerationService,
+    private gameService: GameStateService
   ) {}
 
   ngOnInit(): void {
@@ -355,15 +512,105 @@ export class GameBoardComponent implements OnInit, OnDestroy {
     this.audioInitialized.set(true);
   }
 
+  // ===================== MODE DESAFIO =====================
+
+  selectDifficulty(d: Difficulty): void {
+    if (this.isChallengeActive()) return;
+    this.selectedDifficulty.set(d);
+  }
+
+  private newChallenge(): void {
+    const level = this.levelGenerationService.generateLevel(this.selectedDifficulty());
+    if (!level) return;
+    this.gameService.startLevel(level);
+    this.hintNodeId.set(null);
+    this.lastMoveResult.set(null);
+    this.syncFromGame();
+  }
+
+  startChallenge(): void {
+    this.clearPath();
+    this.newChallenge();
+  }
+
+  nextChallenge(): void {
+    this.newChallenge();
+  }
+
+  exitChallenge(): void {
+    this.gameService.reset();
+    this.hintNodeId.set(null);
+    this.clearPath();
+    this.syncFromGame();
+  }
+
+  requestHint(): void {
+    const step = this.gameService.requestHint();
+    this.hintNodeId.set(step ?? null);
+  }
+
+  private handleGameMove(nodeId: string): void {
+    const result = this.gameService.moveTo(nodeId);
+    this.lastMoveResult.set(result);
+
+    const node = this.getNodeById(nodeId);
+    if (node && (result === 'moved' || result === 'won')) {
+      this.audioService.playNote(this.getNoteName(node));
+    }
+    this.syncFromGame();
+  }
+
+  private syncFromGame(): void {
+    const state = this.gameService.getState();
+    if (state) {
+      this.gameLevel.set(state.level);
+      this.gameMoves.set(state.movesCount);
+      this.gameComplete.set(state.isComplete);
+      this.gameOutcome.set(state.outcome);
+      this.gameStars.set(this.gameService.starsForResult());
+
+      // Espelha o trajeto do jogo no tabuleiro
+      this.currentPath.set(state.currentPath);
+      const lastId = state.currentPath[state.currentPath.length - 1] ?? null;
+      this.selectedNodeId.set(lastId);
+      this.currentNeighbors.set(lastId ? this.graphEngine.getNeighbors(lastId) : []);
+    } else {
+      this.gameLevel.set(null);
+      this.gameMoves.set(0);
+      this.gameComplete.set(false);
+      this.gameOutcome.set(null);
+      this.gameStars.set(1);
+    }
+  }
+
+  difficultyLabel(d: Difficulty): string {
+    return d === 'easy' ? 'Fácil' : d === 'medium' ? 'Médio' : 'Difícil';
+  }
+
+  renderStars(n: number): string {
+    return '★'.repeat(n) + '☆'.repeat(3 - n);
+  }
+
+  isTargetNode(node: NoteNode): boolean {
+    return this.gameLevel()?.goal.targetNodeId === node.id;
+  }
+
   /**
    * NAVEGAÇÃO LOCAL: clique interage com a posição específica no tabuleiro.
    *
-   * - Clique em nó adjacente ao último do trajeto → estende o caminho
-   * - Clique em nó não adjacente → inicia novo trajeto naquela posição
-   * - Clique no último nó → desseleciona e limpa o trajeto
+   * - Modo desafio ativo: repassa o clique ao GameStateService (só vizinho).
+   * - Navegação livre:
+   *   - Clique em nó adjacente ao último do trajeto → estende o caminho
+   *   - Clique em nó não adjacente → inicia novo trajeto naquela posição
+   *   - Clique no último nó → desseleciona e limpa o trajeto
    */
   onNodeClick(node: NoteNode, event: Event): void {
     event.stopPropagation();
+
+    if (this.isChallengeActive()) {
+      this.handleGameMove(node.id);
+      return;
+    }
 
     const path = this.currentPath();
     const lastId = path.length > 0 ? path[path.length - 1] : null;
@@ -406,6 +653,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
   }
 
   onSvgClick(event: Event): void {
+    if (this.isChallengeActive()) return;
     this.clearPath();
   }
 
@@ -414,6 +662,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
   }
 
   onRootChange(event: Event): void {
+    if (this.isChallengeActive()) return;
     const select = event.target as HTMLSelectElement;
     const newRoot = parseInt(select.value, 10);
 
@@ -425,6 +674,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
   }
 
   onPresetChange(event: Event): void {
+    if (this.isChallengeActive()) return;
     const select = event.target as HTMLSelectElement;
     const presetName = select.value;
 
@@ -439,6 +689,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
   }
 
   pinSelectedAsRoot(): void {
+    if (this.isChallengeActive()) return;
     const node = this.selectedNode();
     if (!node) return;
 
@@ -493,6 +744,11 @@ export class GameBoardComponent implements OnInit, OnDestroy {
    * Classes do círculo dos nós conforme estado LOCAL
    */
   getNodeCircleClass(node: NoteNode): string {
+    // Nó-alvo do desafio (maior prioridade visual)
+    if (this.isTargetNode(node)) {
+      return 'fill-amber-500/80 stroke-amber-200 drop-shadow-[0_0_12px_rgba(252,211,77,0.8)]';
+    }
+
     // Nó Raiz (todas as instâncias da pitch class raiz)
     if (node.isRoot) {
       return 'fill-pink-600/80 stroke-pink-300 drop-shadow-[0_0_12px_rgba(236,72,153,0.6)]';
@@ -522,6 +778,9 @@ export class GameBoardComponent implements OnInit, OnDestroy {
    * Classes do rótulo (cifra) dos nós conforme estado
    */
   getNodeLabelClass(node: NoteNode): string {
+    if (this.isTargetNode(node)) {
+      return 'fill-slate-950';
+    }
     if (node.isRoot || this.isInPath(node.id)) {
       return 'fill-white';
     }
