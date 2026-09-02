@@ -4,3 +4,27 @@
 * {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
+
+/* Foco de teclado consistente em toda a malha */
+:where(a, button, select, option, input, [tabindex]):focus-visible {
+  outline: 2px solid rgba(167, 139, 250, 0.7);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+button:not(:disabled):not([disabled]) {
+  cursor: pointer;
+}
+
+button:active:not(:disabled):not([disabled]) {
+  transform: translateY(1px);
+}
+
+select:not(:disabled),
+input:not(:disabled) {
+  cursor: pointer;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}

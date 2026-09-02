@@ -121,7 +121,9 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
               </div>
               <div class="flex items-center gap-2 mt-1">
                 <span class="text-xs text-slate-300 font-mono">Movimentos {{ gameMoves() }}/{{ gameLevel()!.goal.maxMoves }}</span>
-                <span *ngIf="!gameComplete()" class="text-xs text-slate-400">· estrelas {{ renderStars(gameStars()) }}</span>
+                <span *ngIf="!gameComplete()" class="inline-flex items-center gap-0.5 align-middle" aria-label="Estrelas: {{ gameStars() }} de 3">
+                  <svg *ngFor="let s of starIndices" class="w-3.5 h-3.5 text-amber-300" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" [attr.fill]="s < gameStars() ? 'currentColor' : 'none'" aria-hidden="true"><path d="M12 2l3.09 6.26L21.5 9.27l-4.5 4.39 1.06 6.2L12 16.77 5.94 19.86l1.06-6.2L2.5 9.27l6.41-1.01z"/></svg>
+                </span>
               </div>
             </div>
 
@@ -137,7 +139,15 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
                     {{ gameOutcome() === 'win' ? 'Desafio Concluído!' : 'Limite de Movimentos' }}
                   </div>
                   <div class="text-sm text-slate-300 mt-0.5">
-                    <ng-container *ngIf="gameOutcome() === 'win'">Estrelas: {{ renderStars(gameStars()) }} em {{ gameMoves() }} movimentos</ng-container>
+                    <ng-container *ngIf="gameOutcome() === 'win'">
+                      <span class="inline-flex items-center gap-1">
+                        <span>Estrelas:</span>
+                        <span class="inline-flex items-center gap-0.5 text-amber-300" aria-label="Estrelas: {{ gameStars() }} de 3">
+                          <svg *ngFor="let s of starIndices" class="w-4 h-4" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" [attr.fill]="s < gameStars() ? 'currentColor' : 'none'" aria-hidden="true"><path d="M12 2l3.09 6.26L21.5 9.27l-4.5 4.39 1.06 6.2L12 16.77 5.94 19.86l1.06-6.2L2.5 9.27l6.41-1.01z"/></svg>
+                        </span>
+                        <span>em {{ gameMoves() }} movimentos</span>
+                      </span>
+                    </ng-container>
                     <ng-container *ngIf="gameOutcome() === 'lose'">Tente novamente com outro caminho.</ng-container>
                   </div>
                 </div>
@@ -267,24 +277,26 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
                 <button
                   *ngIf="!isChallengeActive()"
                   (click)="startChallenge()"
-                  class="w-full px-2 py-2 rounded-lg text-[11px] font-bold transition-colors duration-200
+                  class="w-full px-2 py-2 rounded-lg text-[11px] font-bold inline-flex items-center justify-center gap-1.5 transition-colors duration-200
                     border border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/20">
-                  ▶ Iniciar Desafio
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  Iniciar Desafio
                 </button>
-
                 <!-- Controles do desafio ativo -->
                 <ng-container *ngIf="isChallengeActive()">
                   <button
                     (click)="requestHint()"
-                    class="w-full px-2 py-2 rounded-lg text-[11px] font-bold transition-colors duration-200
+                    class="w-full px-2 py-2 rounded-lg text-[11px] font-bold inline-flex items-center justify-center gap-1.5 transition-colors duration-200
                       border border-cyan-500/30 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20">
-                    💡 Dica
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>
+                    Dica
                   </button>
                   <button
                     (click)="exitChallenge()"
-                    class="w-full mt-1.5 px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors duration-200
+                    class="w-full mt-1.5 px-2 py-1.5 rounded-lg text-[10px] font-semibold inline-flex items-center justify-center gap-1.5 transition-colors duration-200
                       border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800">
-                    ✕ Sair do Desafio
+                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    Sair do Desafio
                   </button>
                 </ng-container>
 
@@ -292,9 +304,10 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
                 <ng-container *ngIf="!isChallengeActive() && gameLevel()">
                   <button
                     (click)="nextChallenge()"
-                    class="w-full px-2 py-2 rounded-lg text-[11px] font-bold transition-colors duration-200
+                    class="w-full px-2 py-2 rounded-lg text-[11px] font-bold inline-flex items-center justify-center gap-1.5 transition-colors duration-200
                       border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20">
-                    ▶ Próximo Desafio
+                    Próximo Desafio
+                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                   </button>
                 </ng-container>
               </div>
@@ -348,9 +361,10 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
                     <button
                       *ngIf="pathLength() > 0 && !isChallengeActive()"
                       (click)="clearPath()"
-                      class="w-full px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors duration-200
+                      class="w-full px-2 py-1.5 rounded-lg text-[10px] font-semibold inline-flex items-center justify-center gap-1.5 transition-colors duration-200
                         border border-rose-500/20 bg-rose-500/5 text-rose-300 hover:bg-rose-500/10">
-                      ✕ Limpar Caminho
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6"/></svg>
+                      Limpar Caminho
                     </button>
                     <button
                       (click)="pinSelectedAsRoot()"
@@ -426,6 +440,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
 
   // ---- Estado do Modo Desafio (espelhado do GameStateService) ----
   difficulties: Difficulty[] = ['easy', 'medium', 'hard'];
+  starIndices = [0, 1, 2];
   selectedDifficulty = signal<Difficulty>('easy');
 
   gameLevel = signal<Level | null>(null);
@@ -585,10 +600,6 @@ export class GameBoardComponent implements OnInit, OnDestroy {
 
   difficultyLabel(d: Difficulty): string {
     return d === 'easy' ? 'Fácil' : d === 'medium' ? 'Médio' : 'Difícil';
-  }
-
-  renderStars(n: number): string {
-    return '★'.repeat(n) + '☆'.repeat(3 - n);
   }
 
   isTargetNode(node: NoteNode): boolean {
