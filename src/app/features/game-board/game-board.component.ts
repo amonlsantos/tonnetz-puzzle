@@ -4,9 +4,11 @@ import { AudioService } from '../../core/services/audio.service';
 import { GraphEngineService } from '../../core/services/graph-engine.service';
 import { LevelGenerationService } from '../../core/services/level-generation.service';
 import { GameStateService, MoveResult } from '../../core/services/game-state.service';
+import { InstrumentModeService } from '../../core/services/instrument-mode.service';
 import { NoteNode, NoteEdge, EdgeType } from '../../core/models/note.model';
 import { TONNETZ_PRESETS } from '../../core/models/tonnetz-coordinate.model';
 import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.model';
+import type { InstrumentModeState, DetectedNote, PitchDetectionConfig } from '../../core/models/instrument-mode.model';
 
 @Component({
   selector: 'app-game-board',
@@ -89,6 +91,24 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
                 text-rose-400 border border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10">
               Parar Sons
             </button>
+
+            <!-- Toggle Modo Instrumento -->
+            <button
+              (click)="toggleInstrumentMode()"
+              [disabled]="!audioInitialized()"
+              class="px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 border inline-flex items-center gap-2"
+              [ngClass]="{
+                'border-violet-500/30 bg-violet-500/10 text-violet-300': instrumentModeActive(),
+                'border-slate-700 bg-slate-900 text-slate-300 hover:border-violet-500/20': !instrumentModeActive(),
+                'opacity-40 cursor-not-allowed': !audioInitialized()
+              }">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+              </svg>
+              {{ instrumentModeActive() ? 'Parar Instrumento' : 'Modo Instrumento' }}
+            </button>
           </div>
         </div>
       </header>
@@ -121,6 +141,7 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
               </div>
               <div class="flex items-center gap-2 mt-1">
                 <span class="text-xs text-slate-300 font-mono">Movimentos {{ gameMoves() }}/{{ gameLevel()!.goal.maxMoves }}</span>
+                <span class="text-xs font-mono" [class.text-rose-300]="gameErrors() > 0" [class.text-slate-500]="gameErrors() === 0">Erros {{ gameErrors() }}</span>
                 <span *ngIf="!gameComplete()" class="inline-flex items-center gap-0.5 align-middle" aria-label="Estrelas: {{ gameStars() }} de 3">
                   <svg *ngFor="let s of starIndices" class="w-3.5 h-3.5 text-amber-300" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" [attr.fill]="s < gameStars() ? 'currentColor' : 'none'" aria-hidden="true"><path d="M12 2l3.09 6.26L21.5 9.27l-4.5 4.39 1.06 6.2L12 16.77 5.94 19.86l1.06-6.2L2.5 9.27l6.41-1.01z"/></svg>
                 </span>
@@ -145,7 +166,7 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
                         <span class="inline-flex items-center gap-0.5 text-amber-300" aria-label="Estrelas: {{ gameStars() }} de 3">
                           <svg *ngFor="let s of starIndices" class="w-4 h-4" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" [attr.fill]="s < gameStars() ? 'currentColor' : 'none'" aria-hidden="true"><path d="M12 2l3.09 6.26L21.5 9.27l-4.5 4.39 1.06 6.2L12 16.77 5.94 19.86l1.06-6.2L2.5 9.27l6.41-1.01z"/></svg>
                         </span>
-                        <span>em {{ gameMoves() }} movimentos</span>
+                        <span>em {{ gameMoves() }} movimentos · {{ gameErrors() }} erros</span>
                       </span>
                     </ng-container>
                     <ng-container *ngIf="gameOutcome() === 'lose'">Tente novamente com outro caminho.</ng-container>
@@ -154,11 +175,78 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
               </div>
             </div>
 
+            <!-- Display do Afinador (Modo Instrumento) -->
+            <div *ngIf="instrumentModeActive()" 
+                 class="absolute top-4 right-4 z-10 px-4 py-3 rounded-xl bg-slate-950/95 border backdrop-blur-sm min-w-[200px]"
+                 [ngClass]="{
+                   'border-emerald-500/40': instrumentModeState() === 'note-locked',
+                   'border-violet-500/40': instrumentModeState() === 'listening',
+                   'border-slate-700': instrumentModeState() === 'no-signal',
+                   'border-rose-500/40': instrumentModeState() === 'permission-denied'
+                 }">
+              
+              <!-- Header com estado -->
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-[10px] uppercase tracking-wider font-bold"
+                      [ngClass]="{
+                        'text-emerald-300': instrumentModeState() === 'note-locked',
+                        'text-violet-300': instrumentModeState() === 'listening',
+                        'text-slate-400': instrumentModeState() === 'no-signal',
+                        'text-rose-300': instrumentModeState() === 'permission-denied'
+                      }">
+                  {{ getInstrumentStateLabel(instrumentModeState()) }}
+                </span>
+                <span class="w-2 h-2 rounded-full"
+                      [ngClass]="{
+                        'bg-emerald-400 animate-pulse': instrumentModeState() === 'note-locked',
+                        'bg-violet-400 animate-pulse': instrumentModeState() === 'listening',
+                        'bg-slate-600': instrumentModeState() === 'no-signal',
+                        'bg-rose-400': instrumentModeState() === 'permission-denied'
+                      }"></span>
+              </div>
+              
+              <!-- Dados da nota (só se state válido) -->
+              <ng-container *ngIf="detectedNote() && detectedNote()!.noteName">
+                <div class="space-y-1">
+                  <div class="text-2xl font-bold text-slate-100">
+                    {{ detectedNote()!.noteName }}
+                  </div>
+                  <div class="text-xs text-slate-400 font-mono">
+                    {{ detectedNote()!.frequency | number:'1.1-1' }} Hz
+                  </div>
+                  <div class="text-sm font-semibold"
+                       [ngClass]="{
+                         'text-emerald-300': absCents() < 10,
+                         'text-amber-300': absCents() >= 10 && absCents() < 30,
+                         'text-rose-300': absCents() >= 30
+                       }">
+                    {{ detectedNote()!.cents! > 0 ? '+' : '' }}{{ detectedNote()!.cents | number:'1.0-0' }} cents
+                  </div>
+                </div>
+              </ng-container>
+              
+              <!-- Mensagem de estado (se não há nota) -->
+              <ng-container *ngIf="!detectedNote() || !detectedNote()!.noteName">
+                <div class="text-sm text-slate-400">
+                  {{ getInstrumentStateMessage(instrumentModeState()) }}
+                </div>
+              </ng-container>
+
+              <!-- Feedback do desafio -->
+              <div *ngIf="isChallengeActive() && instrumentFeedback()"
+                   class="mt-2 pt-2 border-t border-slate-800/70 text-[11px] font-semibold"
+                   [ngClass]="instrumentFeedback() === 'valid' ? 'text-emerald-300' : 'text-rose-300'">
+                {{ instrumentFeedback() === 'valid' ? 'Vizinha válida' : 'Nota fora da vizinhança (+1 erro)' }}
+              </div>
+            </div>
+
             <!-- SVG Responsivo -->
             <svg
               [attr.viewBox]="viewBox"
               preserveAspectRatio="xMidYMid meet"
               (click)="onSvgClick($event)"
+              [class.cursor-not-allowed]="instrumentModeActive()"
+              [class.cursor-pointer]="!instrumentModeActive()"
               class="w-full h-full block select-none">
 
               <!-- Camada de arestas (três eixos vetoriais) -->
@@ -236,7 +324,7 @@ import { ChallengeOutcome, Difficulty, Level } from '../../core/models/graph.mod
             <!-- Indicador de modo de navegação -->
             <div class="absolute bottom-4 left-4 z-10 px-3 py-1.5 rounded-full bg-black/70 border border-slate-800/70 backdrop-blur-sm">
               <span class="text-[11px] font-medium text-slate-300 tracking-wide">
-                {{ isChallengeActive() ? 'Clique no próximo vizinho para avançar no desafio' : 'Clique em um vizinho para estender o trajeto' }}
+                {{ navigationInstruction() }}
               </span>
             </div>
           </div>
@@ -445,6 +533,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
 
   gameLevel = signal<Level | null>(null);
   gameMoves = signal<number>(0);
+  gameErrors = signal<number>(0);
   gameComplete = signal<boolean>(false);
   gameOutcome = signal<ChallengeOutcome | null>(null);
   gameStars = signal<1 | 2 | 3>(1);
@@ -492,20 +581,62 @@ export class GameBoardComponent implements OnInit, OnDestroy {
     return points.length >= 2 ? points.join(' ') : null;
   });
 
+  // ---- Estado do Modo Instrumento ----
+  instrumentModeActive = signal<boolean>(false);
+  instrumentModeState = signal<InstrumentModeState>('inactive');
+  detectedNote = signal<DetectedNote | null>(null);
+  instrumentFeedback = signal<'valid' | 'error' | null>(null);
+
+  /** Última nota travada já processada (evita repetir com nota sustentada) */
+  private lastLockedPitchClass: number | null = null;
+
+  /** Instrução de navegação exibida abaixo da malha */
+  navigationInstruction = computed<string>(() => {
+    if (this.instrumentModeActive() && this.isChallengeActive()) {
+      return 'Toque o próximo vizinho para avançar no desafio';
+    }
+    if (this.instrumentModeActive()) {
+      return 'Toque uma nota para mover o cursor';
+    }
+    return this.isChallengeActive()
+      ? 'Clique no próximo vizinho para avançar no desafio'
+      : 'Clique em um vizinho para estender o trajeto';
+  });
+
+  private readonly DETECTION_CONFIG: PitchDetectionConfig = {
+    fftSize: 2048,
+    clarityThreshold: 0.9,
+    stabilityFrames: 3,
+    hysteresisCents: 50,
+  };
+
   constructor(
     private audioService: AudioService,
     private graphEngine: GraphEngineService,
     private levelGenerationService: LevelGenerationService,
-    private gameService: GameStateService
+    private gameService: GameStateService,
+    private instrumentMode: InstrumentModeService
   ) {}
 
   ngOnInit(): void {
     this.loadGraph();
     this.updateViewBox();
+
+    // Subscribe to instrument mode state
+    this.instrumentMode.state$.subscribe(state => {
+      this.instrumentModeState.set(state);
+    });
+
+    // Subscribe to detected notes and move cursor automatically
+    this.instrumentMode.detectedNote$.subscribe(note => {
+      this.detectedNote.set(note);
+      this.handleInstrumentNote(note);
+    });
   }
 
   ngOnDestroy(): void {
     this.audioService.stopAll();
+    this.instrumentMode.stopListening();
   }
 
   private loadGraph(): void {
@@ -540,6 +671,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
     this.gameService.startLevel(level);
     this.hintNodeId.set(null);
     this.lastMoveResult.set(null);
+    this.instrumentFeedback.set(null);
     this.syncFromGame();
   }
 
@@ -580,6 +712,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
     if (state) {
       this.gameLevel.set(state.level);
       this.gameMoves.set(state.movesCount);
+      this.gameErrors.set(state.errorsCount);
       this.gameComplete.set(state.isComplete);
       this.gameOutcome.set(state.outcome);
       this.gameStars.set(this.gameService.starsForResult());
@@ -592,6 +725,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
     } else {
       this.gameLevel.set(null);
       this.gameMoves.set(0);
+      this.gameErrors.set(0);
       this.gameComplete.set(false);
       this.gameOutcome.set(null);
       this.gameStars.set(1);
@@ -617,6 +751,11 @@ export class GameBoardComponent implements OnInit, OnDestroy {
    */
   onNodeClick(node: NoteNode, event: Event): void {
     event.stopPropagation();
+
+    // Bloquear clique se instrumento ativo (modo exclusivo)
+    if (this.instrumentModeActive()) {
+      return;
+    }
 
     if (this.isChallengeActive()) {
       this.handleGameMove(node.id);
@@ -682,6 +821,16 @@ export class GameBoardComponent implements OnInit, OnDestroy {
 
     this.loadGraph();
     this.updateViewBox();
+
+    // Se instrumento ativo, limpar trajeto e reposicionar
+    if (this.instrumentModeActive()) {
+      const firstNode = this.nodes[0];
+      if (firstNode) {
+        this.currentPath.set([firstNode.id]);
+        this.selectedNodeId.set(firstNode.id);
+        this.currentNeighbors.set(this.graphEngine.getNeighbors(firstNode.id));
+      }
+    }
   }
 
   onPresetChange(event: Event): void {
@@ -696,6 +845,16 @@ export class GameBoardComponent implements OnInit, OnDestroy {
       this.graphEngine.setIntervals(intervals);
       this.loadGraph();
       this.updateViewBox();
+
+      // Se instrumento ativo, limpar trajeto e reposicionar
+      if (this.instrumentModeActive()) {
+        const firstNode = this.nodes[0];
+        if (firstNode) {
+          this.currentPath.set([firstNode.id]);
+          this.selectedNodeId.set(firstNode.id);
+          this.currentNeighbors.set(this.graphEngine.getNeighbors(firstNode.id));
+        }
+      }
     }
   }
 
@@ -799,5 +958,190 @@ export class GameBoardComponent implements OnInit, OnDestroy {
       return 'fill-violet-100';
     }
     return 'fill-slate-300';
+  }
+
+  // ===================== MODO INSTRUMENTO =====================
+
+  /**
+   * Toggle do modo instrumento: inicia ou para a escuta do microfone
+   */
+  async toggleInstrumentMode(): Promise<void> {
+    if (this.instrumentModeActive()) {
+      // Desligar
+      this.instrumentMode.stopListening();
+      this.instrumentModeActive.set(false);
+      this.lastLockedPitchClass = null;
+      this.instrumentFeedback.set(null);
+    } else {
+      // Ligar
+      try {
+        await this.instrumentMode.startListening(this.DETECTION_CONFIG);
+        this.instrumentModeActive.set(true);
+      } catch (error: any) {
+        console.error('Failed to start instrument mode:', error);
+        // UI já reflete 'permission-denied' via state$
+      }
+    }
+  }
+
+  /**
+   * Processa uma nota detectada pelo modo instrumento.
+   *
+   * Só age na transição para `note-locked` e uma vez por classe de altura,
+   * evitando que uma nota sustentada avance vários movimentos.
+   */
+  private handleInstrumentNote(note: DetectedNote): void {
+    if (note.state !== 'note-locked' || note.pitchClass === null) {
+      this.lastLockedPitchClass = null;
+      this.instrumentFeedback.set(null);
+      return;
+    }
+
+    if (note.pitchClass === this.lastLockedPitchClass) {
+      return;
+    }
+    this.lastLockedPitchClass = note.pitchClass;
+
+    // Desafio concluído: ignora navegação até iniciar outro/sair
+    if (this.gameLevel() && !this.isChallengeActive()) {
+      this.instrumentFeedback.set(null);
+      return;
+    }
+
+    if (this.isChallengeActive()) {
+      const result = this.gameService.moveToPitchClass(note.pitchClass);
+      this.lastMoveResult.set(result);
+      this.instrumentFeedback.set(result === 'invalid' ? 'error' : 'valid');
+      this.syncFromGame();
+      return;
+    }
+
+    this.moveToNoteByPitch(note.pitchClass);
+  }
+
+  /**
+   * Move o cursor para o nó mais próximo da classe de altura detectada.
+   * 
+   * Sua decisão #7:
+   * - Critério: distância de grafo (número de passos)
+   * - Desempate: distância euclidiana (x,y)
+   * - Oitava: ignorada (só pitchClass)
+   * - Classe não existe: cursor para (fim do trajeto)
+   * - Tipo de movimento: salto direto
+   */
+  private moveToNoteByPitch(pitchClass: number): void {
+    const currentNodeId = this.currentPath()[this.currentPath().length - 1];
+    if (!currentNodeId) {
+      // Sem nó atual, iniciar do primeiro nó da malha
+      const firstNode = this.nodes[0];
+      if (firstNode) {
+        this.addNodeToPath(firstNode.id);
+      }
+      return;
+    }
+
+    // 1. Encontrar todos os nós com essa pitchClass
+    const candidateNodes = this.nodes.filter(node => node.pitchClass === pitchClass);
+
+    if (candidateNodes.length === 0) {
+      // Classe não existe na malha → fim do trajeto (não move)
+      return;
+    }
+
+    // 2. Calcular distâncias de grafo
+    const withDistances = candidateNodes.map(node => {
+      const path = this.graphEngine.getShortestPath(currentNodeId, node.id);
+      return {
+        node,
+        graphDistance: path.length - 1, // número de passos
+        euclideanDistance: this.calculateEuclideanDistance(
+          this.getNodeById(currentNodeId)!,
+          node
+        ),
+      };
+    });
+
+    // 3. Ordenar: primeiro por graphDistance, depois por euclideanDistance
+    withDistances.sort((a, b) => {
+      if (a.graphDistance !== b.graphDistance) {
+        return a.graphDistance - b.graphDistance;
+      }
+      return a.euclideanDistance - b.euclideanDistance;
+    });
+
+    const targetNode = withDistances[0].node;
+    if (targetNode.id === currentNodeId) {
+      return;
+    }
+
+    // 4. Salto direto (não valida vizinhança em modo livre)
+    this.addNodeToPath(targetNode.id);
+    this.playNode(targetNode);
+  }
+
+  /**
+   * Calcula distância euclidiana entre dois nós (x,y no SVG)
+   */
+  private calculateEuclideanDistance(nodeA: NoteNode, nodeB: NoteNode): number {
+    const dx = nodeA.x - nodeB.x;
+    const dy = nodeA.y - nodeB.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  /**
+   * Labels de estado para display na UI
+   */
+  getInstrumentStateLabel(state: InstrumentModeState): string {
+    const labels: Record<InstrumentModeState, string> = {
+      'inactive': 'Inativo',
+      'requesting-permission': 'Solicitando...',
+      'permission-denied': 'Bloqueado',
+      'listening': 'Ouvindo',
+      'note-locked': 'Nota Detectada',
+      'no-signal': 'Sem Sinal',
+    };
+    return labels[state];
+  }
+
+  /**
+   * Mensagens de estado para display na UI
+   */
+  getInstrumentStateMessage(state: InstrumentModeState): string {
+    const messages: Record<InstrumentModeState, string> = {
+      'inactive': '',
+      'requesting-permission': 'Aguardando permissão do microfone...',
+      'permission-denied': 'Permissão negada. Verifique as configurações do navegador.',
+      'listening': 'Toque uma nota no instrumento...',
+      'note-locked': '',
+      'no-signal': 'Aguardando sinal claro...',
+    };
+    return messages[state];
+  }
+
+  /**
+   * Método auxiliar para template: valor absoluto dos cents detectados.
+   * Evita referência direta a Math no template do Angular.
+   */
+  absCents(): number {
+    return Math.abs(this.detectedNote()?.cents ?? 0);
+  }
+
+  /**
+   * Adiciona um nó ao trajeto (salto direto no modo instrumento)
+   */
+  private addNodeToPath(nodeId: string): void {
+    const path = this.currentPath();
+    this.currentPath.set([...path, nodeId]);
+    this.selectedNodeId.set(nodeId);
+    this.currentNeighbors.set(this.graphEngine.getNeighbors(nodeId));
+  }
+
+  /**
+   * Toca a nota do nó, se a síntese estiver ativa.
+   * Emudecido durante o modo instrumento (decisão Q5).
+   */
+  private playNode(node: NoteNode): void {
+    if (this.instrumentModeActive()) return;
+    this.audioService.playNote(this.getNoteName(node));
   }
 }

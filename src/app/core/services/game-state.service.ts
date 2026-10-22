@@ -3,6 +3,7 @@ import { GraphEngineService } from './graph-engine.service';
 import { HintService } from './hint.service';
 import { ScoringService } from './scoring.service';
 import { GameState, Level } from '../models/graph.model';
+import { NoteNode } from '../models/note.model';
 
 /** Resultado de uma tentativa de movimento */
 export type MoveResult = 'moved' | 'won' | 'lost' | 'invalid';
@@ -35,6 +36,7 @@ export class GameStateService {
       level,
       currentPath: [level.startNodeId],
       movesCount: 0,
+      errorsCount: 0,
       isComplete: false,
       outcome: null,
     };
@@ -99,6 +101,70 @@ export class GameStateService {
     return 'moved';
   }
 
+  /**
+   * Tenta avançar para um vizinho local cuja classe de altura corresponda à
+   * nota tocada no modo instrumento.
+   *
+   * Notas que não são vizinhas locais não movem o jogador nem consomem
+   * movimento, mas contam como erro. Quando mais de um vizinho compartilha a
+   * mesma classe de altura, escolhe o que deixa o jogador mais perto do alvo.
+   */
+  moveToPitchClass(pitchClass: number): MoveResult {
+    if (!this.state || this.state.isComplete) {
+      return 'invalid';
+    }
+
+    const currentId = this.currentNodeId();
+    const currentNode = currentId ? this.graphEngine.getNode(currentId) : undefined;
+    if (!currentId || !currentNode) {
+      return 'invalid';
+    }
+
+    const normalizedPitchClass = ((pitchClass % 12) + 12) % 12;
+    const candidates = this.graphEngine
+      .getNeighbors(currentId)
+      .map(nodeId => this.graphEngine.getNode(nodeId))
+      .filter(
+        (node): node is NoteNode =>
+          !!node && node.pitchClass === normalizedPitchClass
+      );
+
+    if (candidates.length === 0) {
+      this.state = {
+        ...this.state,
+        errorsCount: this.state.errorsCount + 1,
+      };
+      return 'invalid';
+    }
+
+    const targetId = this.state.level.goal.targetNodeId;
+    const [best] = candidates
+      .map(node => ({
+        node,
+        remainingDistance: this.graphDistanceTo(node.id, targetId),
+        euclideanDistance: this.euclideanDistance(currentNode, node),
+      }))
+      .sort(
+        (a, b) =>
+          a.remainingDistance - b.remainingDistance ||
+          a.euclideanDistance - b.euclideanDistance ||
+          a.node.id.localeCompare(b.node.id)
+      );
+
+    return this.moveTo(best.node.id);
+  }
+
+  private graphDistanceTo(fromNodeId: string, toNodeId: string): number {
+    const path = this.graphEngine.getShortestPath(fromNodeId, toNodeId);
+    return path.length === 0 ? Number.POSITIVE_INFINITY : path.length - 1;
+  }
+
+  private euclideanDistance(nodeA: NoteNode, nodeB: NoteNode): number {
+    const dx = nodeA.x - nodeB.x;
+    const dy = nodeA.y - nodeB.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
   /** Próximo passo sugerido rumo ao alvo, ou null quando não aplicável */
   requestHint(): string | null {
     if (!this.state || this.state.isComplete) {
@@ -116,7 +182,11 @@ export class GameStateService {
     if (!this.state) {
       return 1;
     }
-    return this.scoringService.computeStars(this.state.level, this.state.movesCount);
+    return this.scoringService.computeStars(
+      this.state.level,
+      this.state.movesCount,
+      this.state.errorsCount
+    );
   }
 
   reset(): void {

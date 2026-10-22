@@ -50,6 +50,7 @@ export interface GameState {
   level: Level;
   currentPath: string[];
   movesCount: number;
+  errorsCount: number;
   isComplete: boolean;
   outcome: ChallengeOutcome | null;
 }

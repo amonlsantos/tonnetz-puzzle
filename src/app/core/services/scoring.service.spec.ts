@@ -33,6 +33,15 @@ describe('ScoringService', () => {
       expect(service.computeStars(level, 8)).toBe(1);
     });
 
+    it('penaliza erros como movimentos extras na pontuação', () => {
+      const { service } = createScoringService();
+      const level = makeLevel(5, 8); // medium: folga 2
+
+      expect(service.computeStars(level, 5, 0)).toBe(3);
+      expect(service.computeStars(level, 5, 1)).toBe(2);
+      expect(service.computeStars(level, 5, 3)).toBe(1);
+    });
+
     it('sempre retorna ao menos 1 estrela para um nível vencido', () => {
       const { service } = createScoringService();
       const level = makeLevel(2, 6);
